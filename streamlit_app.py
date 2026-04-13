@@ -24,41 +24,44 @@ def get_data():
         content = repo.get_contents("books.csv")
         return pd.read_csv(io.StringIO(content.decoded_content.decode())), content.sha
     except:
-        cols = ["title","author","genre","date_read","score","mood","vibes","ai_review","similarities"]
+        cols = ["title","author","genre","date_read","score","mood","vibes","impact","ai_review","similarities"]
         return pd.DataFrame(columns=cols), None
 
 def save_data(df, sha):
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
-    repo.update_file("books.csv", "Updated Emotional Archive", csv_buf.getvalue(), sha)
+    repo.update_file("books.csv", "Updated Archive", csv_buf.getvalue(), sha)
 
 # --- 4. UI SETUP ---
 st.set_page_config(page_title="BookVault AI", layout="wide")
-st.title("🌙 The Emotional Book Vault")
+st.title("⚖️ The Honest Book Vault")
 
 tab1, tab2, tab3 = st.tabs(["➕ Archive a Book", "📖 The Collection", "📊 Reading DNA"])
 
 with tab1:
-    # --- PHASE 0: PERSONAL INPUT ---
     if st.session_state.interview_step == 0:
-        st.subheader("Step 1: Emotional Anchors")
+        st.subheader("Step 1: The Initial Impression")
         with st.form("init_form"):
             col1, col2 = st.columns(2)
             with col1:
                 t = st.text_input("Book Title")
                 a = st.text_input("Author")
                 g = st.text_input("Genre")
-                # More mood options
-                m = st.select_slider("Overall Mood", 
-                    options=["Wrecked", "Melancholy", "Comforted", "Inspired", "Challenged", "Awestruck", "Haunted", "Joyful"])
+                # Expanded Moods as a dropdown
+                m = st.selectbox("Overall Mood", 
+                    ["Enchanted", "Awestruck", "Inspired", "Comforted", "Neutral / Fine", 
+                     "Bored", "Frustrated", "Wrecked", "Melancholy", "Haunted", "Repulsed", "Angry"])
             
             with col2:
-                vibe = st.text_input("One-word 'Vibe' (e.g. Atmospheric, Gritty, Cozy)")
+                vibe = st.text_input("Vibe (e.g. Gritty, Preachy, Dreamy, Clinical)")
+                # Brutally honest personal impact
                 impact = st.selectbox("Personal Impact", 
-                    ["It changed my mind", "It broke my heart", "It felt like a hug", "It kept me up at night", "It was a slog but worth it"])
-                lingering_thought = st.text_area("What's the one thought you can't shake since finishing it?")
+                    ["It changed my life", "It broke my heart", "It felt like a hug", 
+                     "I didn't care at all", "It felt like a waste of time", 
+                     "I hated every minute", "It was a slog but okay", "It made me angry"])
+                lingering_thought = st.text_area("One thing you'd tell the author if they were standing here?")
             
-            if st.form_submit_button("Begin Personal Interview"):
+            if st.form_submit_button("Start Honest Interview"):
                 if t and a:
                     st.session_state.temp_book = {
                         "title": t, "author": a, "genre": g, 
@@ -67,25 +70,28 @@ with tab1:
                     st.session_state.interview_step = 1
                     st.rerun()
 
-    # --- PHASE 1: THE BIO-INTERVIEW ---
+    # --- PHASE 1: DYNAMIC INTERVIEW ---
     elif st.session_state.interview_step == 1:
-        st.subheader(f"Reflecting on '{st.session_state.temp_book['title']}'")
+        st.subheader(f"Dissecting '{st.session_state.temp_book['title']}'")
         
-        # Determine the Question
-        with st.spinner("AI is listening..."):
+        with st.spinner("AI is analyzing your tone..."):
             try:
-                history = " ".join(st.session_state.answers)
+                # We pass the question count to the AI so it knows to change topics
+                history = " | ".join(st.session_state.answers)
                 q_prompt = f"""
-                The user just finished '{st.session_state.temp_book['title']}'. 
-                Context: It felt {st.session_state.temp_book['mood']} and {st.session_state.temp_book['impact']}.
-                Lingering thought: {st.session_state.temp_book['seed']}.
-                Previous answers: {history}.
-                Ask 1 highly personal, psychological question that probes WHY the book made them feel this way. 
-                Avoid generic book club questions.
+                The user is archiving '{st.session_state.temp_book['title']}'. 
+                Impression: They felt {st.session_state.temp_book['mood']} and said it '{st.session_state.temp_book['impact']}'.
+                Seed thought: {st.session_state.temp_book['seed']}.
+                Previous Questions/Answers: {history}.
+                
+                This is question #{st.session_state.q_count + 1}. 
+                CRITICAL: Do NOT repeat previous topics. If you already asked about characters, ask about the ending, the writing style, or the user's frustration. 
+                If the user hates the book, be a 'cynical critic' and ask why it failed. If they love it, be a 'philosopher'. 
+                Keep it to ONE short, sharp question.
                 """
                 question = model.generate_content(q_prompt).text
             except:
-                question = "Which character's shadow felt most like your own, and why did that unnerve or comfort you?"
+                question = "What was the specific moment you realized this book wasn't (or was) for you?"
 
         st.info(f"**The Vault asks:** {question}")
         user_ans = st.text_input("Your Response:", key=f"ans_{st.session_state.q_count}")
@@ -99,33 +105,36 @@ with tab1:
                     st.session_state.interview_step = 2
                 st.rerun()
 
-    # --- PHASE 2: SYNTHESIS ---
+    # --- PHASE 2: CRITICAL SYNTHESIS ---
     elif st.session_state.interview_step == 2:
-        st.subheader("Step 3: Final Resonance")
-        score = st.slider("Where does this sit in your soul? (Rating)", 1, 10, 8)
+        st.subheader("Final Verdict")
+        score = st.slider("Final Rating (1=Trash, 10=Masterpiece)", 1, 10, 5)
         
-        if st.button("Synthesize My Thoughts"):
-            with st.spinner("Writing your personal archive..."):
+        if st.button("Seal the Archive"):
+            with st.spinner("Writing the definitive review..."):
                 all_context = f"""
                 Book: {st.session_state.temp_book['title']}
-                Mood: {st.session_state.temp_book['mood']}
-                Vibe: {st.session_state.temp_book['vibes']}
                 Impact: {st.session_state.temp_book['impact']}
+                Mood: {st.session_state.temp_book['mood']}
                 Interview: {" ".join(st.session_state.answers)}
                 """
                 f_prompt = f"""
-                Using the context provided: {all_context}, write a 2-paragraph highly personal review.
-                The review should sound like a sophisticated diary entry or a professional critique.
-                Don't just repeat the answers; SYNTHESIZE them into a narrative about the user's experience.
+                Synthesize a 2-paragraph review for '{st.session_state.temp_book['title']}'. 
+                User rating: {score}/10. 
+                The user felt: {st.session_state.temp_book['impact']}.
+                
+                CRITICAL INSTRUCTION: If the rating is low or impact is negative, the review MUST be critical and reflect that dissatisfaction. Do not sugarcoat. 
+                Write it like a high-end literary journal entry.
+                
                 Return ONLY a JSON object:
-                {{"genre": "Auto-detect", "review": "text", "similarities": "2 specific books"}}
+                {{"genre": "Auto-detect", "review": "text", "similarities": "2 books"}}
                 """
                 try:
                     res = model.generate_content(f_prompt).text
                     res_clean = res.replace("```json", "").replace("```", "").strip()
                     data = json.loads(res_clean)
                 except:
-                    data = {"genre": st.session_state.temp_book['genre'], "review": "Synthesis failed, but your thoughts are safe.", "similarities": "TBD"}
+                    data = {"genre": "Unknown", "review": "Synthesis failed. Check logs.", "similarities": "N/A"}
 
                 df, sha = get_data()
                 new_row = {
@@ -136,6 +145,7 @@ with tab1:
                     "score": score,
                     "mood": st.session_state.temp_book['mood'],
                     "vibes": st.session_state.temp_book['vibes'],
+                    "impact": st.session_state.temp_book['impact'],
                     "ai_review": data['review'],
                     "similarities": data['similarities']
                 }
@@ -150,17 +160,22 @@ with tab1:
 with tab2:
     df, _ = get_data()
     if not df.empty:
-        st.dataframe(df[["title", "author", "score", "mood", "vibes", "date_read"]], use_container_width=True, hide_index=True)
-        sel = st.selectbox("Open Archive Entry:", df["title"])
+        st.dataframe(df[["title", "author", "score", "mood", "impact", "date_read"]], use_container_width=True, hide_index=True)
+        sel = st.selectbox("View Entry:", df["title"])
         row = df[df["title"] == sel].iloc[0]
-        st.markdown(f"### The Experience of *{sel}*")
+        st.markdown(f"### Analysis: *{sel}*")
         st.write(row["ai_review"])
-        st.caption(f"Similar Frequencies: {row['similarities']}")
+        st.caption(f"If you felt {row['impact']}, you might try: {row['similarities']}")
 
 # --- TAB 3: DNA ---
 with tab3:
     df, _ = get_data()
     if not df.empty:
-        st.subheader("Your Reading Ecosystem")
-        st.bar_chart(df["mood"].value_counts())
-        st.write("You tend to finish books that leave you feeling:", df["mood"].mode()[0])
+        st.subheader("Your Honest Reading DNA")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Mood Distribution**")
+            st.bar_chart(df["mood"].value_counts())
+        with col2:
+            st.write("**Impact Distribution**")
+            st.bar_chart(df["impact"].value_counts())
