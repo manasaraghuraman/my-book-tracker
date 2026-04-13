@@ -11,7 +11,7 @@ REPO_NAME = st.secrets["REPO_NAME"]
 GEMINI_KEY = st.secrets["GEMINI_KEY"]
 
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
@@ -60,15 +60,20 @@ with tab1:
                     st.rerun()
                 else:
                     st.error("Please provide a title and author.")
-
-    # STEP 1: THE INTERVIEW
+# STEP 1: THE INTERVIEW
     elif st.session_state.interview_step == 1:
         st.subheader(f"Interview for: {st.session_state.temp_book['title']}")
         
         if "ai_question" not in st.session_state:
             with st.spinner("AI is preparing questions..."):
-                q_prompt = f"I finished '{st.session_state.temp_book['title']}'. Ask me 2 serious, specific questions to help you rate it."
-                st.session_state.ai_question = model.generate_content(q_prompt).text
+                try:
+                    q_prompt = f"I finished '{st.session_state.temp_book['title']}'. Ask me 2 serious, specific questions to help you rate it."
+                    # The call that was failing
+                    response = model.generate_content(q_prompt)
+                    st.session_state.ai_question = response.text
+                except Exception as e:
+                    # Backup if the AI is being difficult
+                    st.session_state.ai_question = "The AI is shy right now! Tell me: 1. What was the best part? 2. How did the ending make you feel?"
         
         st.info(st.session_state.ai_question)
         user_response = st.text_area("Your Answer:", height=150)
