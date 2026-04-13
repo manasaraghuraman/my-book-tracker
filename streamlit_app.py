@@ -11,7 +11,7 @@ REPO_NAME = st.secrets["REPO_NAME"]
 GEMINI_KEY = st.secrets["GEMINI_KEY"]
 
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-8b')
 
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
@@ -64,17 +64,20 @@ with tab1:
     elif st.session_state.interview_step == 1:
         st.subheader(f"Interview for: {st.session_state.temp_book['title']}")
         
+        # We use a function with caching so we don't waste API calls
+        @st.cache_data(show_spinner=False)
+        def get_ai_questions(title):
+            q_prompt = f"I finished '{title}'. Ask me 2 serious, specific questions to help you rate it."
+            response = model.generate_content(q_prompt)
+            return response.text
+
         if "ai_question" not in st.session_state:
-            with st.spinner("AI is preparing questions..."):
-                try:
-                    q_prompt = f"I finished '{st.session_state.temp_book['title']}'. Ask me 2 serious, specific questions to help you rate it."
-                    # The call that was failing
-                    response = model.generate_content(q_prompt)
-                    st.session_state.ai_question = response.text
-                except Exception as e:
-                    # Backup if the AI is being difficult
-                    st.session_state.ai_question = "The AI is shy right now! Tell me: 1. What was the best part? 2. How did the ending make you feel?"
-        
+            try:
+                st.session_state.ai_question = get_ai_questions(st.session_state.temp_book['title'])
+            except Exception as e:
+                st.error("Rate limit hit! Wait 60 seconds and try again.")
+                st.session_state.ai_question = "What was your favorite part of the book?"
+
         st.info(st.session_state.ai_question)
         user_response = st.text_area("Your Answer:", height=150)
 
