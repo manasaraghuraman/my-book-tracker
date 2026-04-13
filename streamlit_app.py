@@ -12,9 +12,13 @@ model = genai.GenerativeModel('gemini-1.5-flash-latest')
 g = Github(st.secrets["GITHUB_TOKEN"])
 repo = g.get_repo(st.secrets["REPO_NAME"])
 
-# --- SESSION STATE ---
+# --- SESSION STATE INITIALIZATION ---
 if "interview_step" not in st.session_state:
-    st.session_state.update({"interview_step": 0, "temp_book": {}, "ai_question": ""})
+    st.session_state.interview_step = 0
+if "temp_book" not in st.session_state:
+    st.session_state.temp_book = {}
+if "ai_question" not in st.session_state:
+    st.session_state.ai_question = ""
 
 # --- DATA HELPERS ---
 def get_data():
@@ -47,10 +51,13 @@ with tabs[0]:
                 st.rerun()
 
     elif st.session_state.interview_step == 1:
-        st.subheader(f"Interviewing: {st.session_state.temp_book['title']}")
-        if not st.session_state.ai_question:
-            q_res = model.generate_content(f"Ask 2 deep questions about '{st.session_state.temp_book['title']}' to help me review it.")
-            st.session_state.ai_question = q_res.text
+        st.subheader(f"Interviewing: {st.session_state.temp_book.get('title', 'Unknown')}")
+        
+        # Safer check using st.session_state.get()
+        if not st.session_state.get("ai_question"):
+            with st.spinner("AI is preparing questions..."):
+                q_res = model.generate_content(f"Ask 2 deep questions about '{st.session_state.temp_book.get('title')}' to help me review it.")
+                st.session_state.ai_question = q_res.text
         
         st.info(st.session_state.ai_question)
         ans = st.text_area("Your thoughts:")
