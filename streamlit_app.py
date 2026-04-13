@@ -3,101 +3,113 @@ import pandas as pd
 import google.generativeai as genai
 from github import Github
 import io
+import json
 from datetime import datetime
 
 # --- CONFIG ---
-GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
-REPO_NAME = st.secrets["REPO_NAME"] 
-GEMINI_KEY = st.secrets["GEMINI_KEY"]
-
-genai.configure(api_key=GEMINI_KEY)
-# Use 'latest' to avoid NotFound errors
+genai.configure(api_key=st.secrets["GEMINI_KEY"])
 model = genai.GenerativeModel('gemini-1.5-flash-latest')
+g = Github(st.secrets["GITHUB_TOKEN"])
+repo = g.get_repo(st.secrets["REPO_NAME"])
 
-g = Github(GITHUB_TOKEN)
-repo = g.get_repo(REPO_NAME)
-
+# --- SESSION STATE ---
 if "interview_step" not in st.session_state:
-    st.session_state.interview_step = 0
-if "temp_book" not in st.session_state:
-    st.session_state.temp_book = {}
+    st.session_state.update({"interview_step": 0, "temp_book": {}, "ai_question": ""})
 
-def get_csv_from_github():
+# --- DATA HELPERS ---
+def get_data():
     try:
-        file_content = repo.get_contents("books.csv")
-        return pd.read_csv(io.StringIO(file_content.decoded_content.decode())), file_content.sha
+        content = repo.get_contents("books.csv")
+        return pd.read_csv(io.StringIO(content.decoded_content.decode())), content.sha
     except:
-        cols = ["title","author","genre","date_read","score","mood","ai_review","similarities"]
-        return pd.DataFrame(columns=cols), None
+        return pd.DataFrame(columns=["title","author","genre","date_read","score","mood","ai_review","similarities"]), None
 
-def save_to_github(df, sha):
-    csv_buffer = io.StringIO()
-    df.to_csv(csv_buffer, index=False)
-    repo.update_file("books.csv", "Book Entry Update", csv_buffer.getvalue(), sha)
+def save_data(df, sha):
+    csv_buf = io.StringIO()
+    df.to_csv(csv_buf, index=False)
+    repo.update_file("books.csv", "Update", csv_buf.getvalue(), sha)
 
-st.title("📚 AI Book Vault")
+# --- UI SETUP ---
+st.set_page_config(page_title="BookVault AI", layout="wide")
+st.title("📚 BookVault AI")
 
-tab1, tab2 = st.tabs(["➕ Add Book", "📖 Library"])
+tabs = st.tabs(["➕ Add Book", "📖 Library", "📊 Insights & Recs"])
 
-with tab1:
+# --- TAB 1: INTERVIEW ---
+with tabs[0]:
     if st.session_state.interview_step == 0:
-        with st.form("init_form"):
-            t = st.text_input("Title")
+        with st.form("start"):
+            t = st.text_input("Book Title")
             a = st.text_input("Author")
-            m = st.selectbox("Reading Mood", ["Curious", "Emotional", "Adventurous", "Tired"])
+            m = st.selectbox("Mood", ["Happy", "Sad", "Adventurous", "Tired", "Reflective"])
             if st.form_submit_button("Start Interview"):
-                if t and a:
-                    st.session_state.temp_book = {"title": t, "author": a, "mood": m}
-                    st.session_state.interview_step = 1
-                    st.rerun()
+                st.session_state.update({"temp_book": {"title":t, "author":a, "mood":m}, "interview_step": 1})
+                st.rerun()
 
     elif st.session_state.interview_step == 1:
         st.subheader(f"Interviewing: {st.session_state.temp_book['title']}")
+        if not st.session_state.ai_question:
+            q_res = model.generate_content(f"Ask 2 deep questions about '{st.session_state.temp_book['title']}' to help me review it.")
+            st.session_state.ai_question = q_res.text
         
-        if "ai_question" not in st.session_state:
-            try:
-                q_prompt = f"I finished '{st.session_state.temp_book['title']}'. Ask 2 serious questions to help rate it."
-                st.session_state.ai_question = model.generate_content(q_prompt).text
-            except:
-                st.session_state.ai_question = "What was the most memorable part of this book?"
-
         st.info(st.session_state.ai_question)
         ans = st.text_area("Your thoughts:")
+        
+        # New Feature: Manual Rating Slider
+        manual_score = st.slider("Manual Rating (1-10)", 1, 10, 7)
+        
+        if st.button("Finalize"):
+            with st.spinner("AI is organizing your data..."):
+                prompt = f"""
+                Analyze the book '{st.session_state.temp_book['title']}' using my notes: '{ans}'.
+                The user manually rated it {manual_score}/10. 
+                Return a JSON object exactly like this:
+                {{"score": {manual_score}, "genre": "one word", "review": "2 paragraphs", "similarities": "2 books"}}
+                """
+                res = model.generate_content(prompt).text
+                # Clean JSON string from AI
+                res_clean = res.replace("```json", "").replace("```", "").strip()
+                data = json.loads(res_clean)
 
-        if st.button("Finalize Entry"):
-            with st.spinner("Processing..."):
-                try:
-                    f_prompt = f"Review '{st.session_state.temp_book['title']}' based on: {ans}. Format: SCORE: [1-10] | GENRE: [word] | REVIEW: [text] | SIMILAR: [text]"
-                    res = model.generate_content(f_prompt).text
-                    parts = res.split("|")
-                    
-                    # Safe extract
-                    score = parts[0].split(":")[-1].strip() if ":" in parts[0] else "7"
-                    genre = parts[1].split(":")[-1].strip() if len(parts) > 1 else "Fiction"
-                    review = parts[2].split(":")[-1].strip() if len(parts) > 2 else ans
-                    sims = parts[3].split(":")[-1].strip() if len(parts) > 3 else "N/A"
-                except:
-                    # Backup if AI fails again
-                    score, genre, review, sims = "TBD", "TBD", ans, "TBD"
-
-                df, sha = get_csv_from_github()
-                new_row = {
-                    "title": st.session_state.temp_book['title'], "author": st.session_state.temp_book['author'],
-                    "genre": genre, "date_read": datetime.now().strftime("%Y-%m-%d"),
-                    "score": score, "mood": st.session_state.temp_book['mood'],
-                    "ai_review": review, "similarities": sims
-                }
+                df, sha = get_data()
+                new_row = {**st.session_state.temp_book, "date_read": datetime.now().strftime("%Y-%m-%d"), **data, "ai_review": data['review']}
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                save_to_github(df, sha)
+                save_data(df, sha)
                 
+                st.session_state.update({"interview_step": 0, "ai_question": ""})
                 st.success("Saved!")
-                st.session_state.interview_step = 0
-                if "ai_question" in st.session_state: del st.session_state.ai_question
                 st.rerun()
 
-with tab2:
-    df, _ = get_csv_from_github()
+# --- TAB 2: CLEAN LIBRARY ---
+with tabs[1]:
+    df, _ = get_data()
     if not df.empty:
-        st.dataframe(df)
+        # Custom Column Formatting
+        st.dataframe(df[["title", "author", "score", "genre", "date_read", "mood"]], 
+                     use_container_width=True, hide_index=True)
+        
+        selected_book = st.selectbox("View AI Review for:", df["title"])
+        review_text = df[df["title"] == selected_book]["ai_review"].values[0]
+        st.write(f"**AI Review:** {review_text}")
     else:
-        st.write("No books yet.")
+        st.write("Library empty.")
+
+# --- TAB 3: INSIGHTS & RECS ---
+with tabs[2]:
+    df, _ = get_data()
+    if not df.empty:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("⭐ Top 10")
+            st.table(df.sort_values(by="score", ascending=False).head(10)[["title", "score"]])
+        
+        with col2:
+            st.subheader("🧠 Reading Moods")
+            st.bar_chart(df["mood"].value_counts())
+
+        st.divider()
+        st.subheader("✨ AI Recommendations")
+        if st.button("Get Future Recommendations"):
+            history = ", ".join(df["title"].tolist())
+            rec_res = model.generate_content(f"Based on my history: {history}, suggest 3 books I should read next and why.")
+            st.write(rec_res.text)
