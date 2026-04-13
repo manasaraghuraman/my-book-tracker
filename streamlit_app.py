@@ -5,9 +5,9 @@ from github import Github
 import io
 from datetime import datetime
 
-# --- CONFIGURATION (Use Streamlit Secrets for Keys) ---
+# --- CONFIGURATION (STRICTLY USE SECRETS) ---
 GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
-REPO_NAME = st.secrets["REPO_NAME"]  # e.g., "username/repo-name"
+REPO_NAME = st.secrets["REPO_NAME"]
 GEMINI_KEY = st.secrets["GEMINI_KEY"]
 
 # Setup Gemini
