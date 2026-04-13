@@ -5,16 +5,15 @@ from github import Github
 import io
 from datetime import datetime
 
-# --- CONFIGURATION ---
+# --- CONFIG ---
 GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
 REPO_NAME = st.secrets["REPO_NAME"] 
 GEMINI_KEY = st.secrets["GEMINI_KEY"]
 
-# Setup Gemini (Updated for 2026)
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-3-flash-preview') # Current 2026 version
+# Using the April 2026 stable model
+model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
 
-# Setup GitHub
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
@@ -23,67 +22,62 @@ def get_csv_from_github():
         file_content = repo.get_contents("books.csv")
         df = pd.read_csv(io.StringIO(file_content.decoded_content.decode()))
         return df, file_content.sha
-    except Exception:
-        # If file is missing or broken, return empty DF with correct headers
+    except:
         cols = ["title","author","genre","date_read","score","mood","ai_review","similarities"]
         return pd.DataFrame(columns=cols), None
 
 def save_to_github(df, sha):
     csv_buffer = io.StringIO()
     df.to_csv(csv_buffer, index=False)
-    if sha:
-        repo.update_file("books.csv", "Update books", csv_buffer.getvalue(), sha)
-    else:
-        repo.create_file("books.csv", "Initial books file", csv_buffer.getvalue())
+    repo.update_file("books.csv", "Update books", csv_buffer.getvalue(), sha)
 
-# --- APP UI ---
-st.set_page_config(page_title="Book Vault", layout="wide")
-st.title("📚 AI Book Vault")
+st.title("📚 My Smart Book Vault")
 
-tab1, tab2 = st.tabs(["➕ Add New Book", "📖 My Library"])
+tab1, tab2 = st.tabs(["➕ Add Book", "📖 Library"])
 
 with tab1:
     with st.form("book_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        title = col1.text_input("Book Title")
-        author = col1.text_input("Author")
-        mood = col2.selectbox("Your Reading Mood", ["Curious", "Emotional", "Stressed", "Adventurous"])
-        notes = st.text_area("Your thoughts (AI will use these to rate the book)")
+        title = st.text_input("Book Title")
+        author = st.text_input("Author")
+        notes = st.text_area("Notes (What did you think?)")
+        mood = st.selectbox("Mood", ["Happy", "Sad", "Adventurous", "Tired", "Curious"])
         submit = st.form_submit_button("Analyze & Save")
 
     if submit and title:
-        with st.spinner("AI is thinking..."):
-            prompt = f"Analyze '{title}' by {author}. Notes: {notes}. Mood: {mood}. Return format: Score(1-10)|2-para review|2 similar books"
-            try:
-                response = model.generate_content(prompt).text
+        with st.spinner("AI is analyzing..."):
+            # Refined prompt for better reliability
+            prompt = (f"Analyze the book '{title}' by {author}. Notes: {notes}. Mood: {mood}. "
+                      "Provide: 1. A score (1-10), 2. A 2-paragraph review, 3. Two similar books. "
+                      "Format your response exactly like this: SCORE: [num] | REVIEW: [text] | SIMILAR: [text]")
+            
+            response = model.generate_content(prompt).text
+            
+            # SAFE PARSING: This prevents the 'index out of range' error
+            if "|" in response and len(response.split("|")) >= 3:
                 parts = response.split("|")
-                score = parts[0].strip()
-                review = parts[1].strip()
-                sims = parts[2].strip()
+                score = parts[0].replace("SCORE:", "").strip()
+                review = parts[1].replace("REVIEW:", "").strip()
+                sims = parts[2].replace("SIMILAR:", "").strip()
 
                 df, sha = get_csv_from_github()
-                new_data = {
+                new_row = {
                     "title": title, "author": author, "genre": "TBD",
                     "date_read": datetime.now().strftime("%Y-%m-%d"),
                     "score": score, "mood": mood, "ai_review": review, "similarities": sims
                 }
-                df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
+                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 save_to_github(df, sha)
-                st.success(f"Added {title}!")
-            except Exception as e:
-                st.error(f"AI Error: {e}")
+                st.success(f"Successfully added {title}!")
+            else:
+                st.error("The AI gave a messy response. Try typing more than just 'hello' so it has something to analyze!")
 
 with tab2:
     df, _ = get_csv_from_github()
-    
-    # SAFETY: Check if 'score' exists before sorting
-    if not df.empty and "score" in df.columns:
+    if not df.empty:
+        st.subheader("⭐ Top 10")
         df["score"] = pd.to_numeric(df["score"], errors='coerce')
-        
-        st.subheader("⭐ Top 10 Books")
         st.table(df.sort_values(by="score", ascending=False).head(10)[["title", "author", "score"]])
-        
-        st.subheader("Full Library")
+        st.subheader("Full History")
         st.dataframe(df)
     else:
-        st.info("Your library is empty! Go to the first tab to add a book.")
+        st.write("No books yet!")
