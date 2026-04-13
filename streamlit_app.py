@@ -36,7 +36,7 @@ def save_data(df, sha):
 
 # --- 4. UI SETUP ---
 st.set_page_config(page_title="BookVault AI", layout="wide")
-st.title("⚖️ The Honest Book Vault")
+st.title("Book Tracker yay!")
 
 tab1, tab2, tab3 = st.tabs(["➕ Archive a Book", "📖 The Collection", "📊 Reading DNA"])
 
